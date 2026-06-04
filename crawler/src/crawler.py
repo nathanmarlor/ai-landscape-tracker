@@ -5,6 +5,7 @@ Fetches and processes content from AI news sources.
 
 import json
 import hashlib
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,10 @@ import feedparser
 import yaml
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
+from dotenv import load_dotenv, find_dotenv
+
+# Load .env file at module level (searches parent directories)
+load_dotenv(find_dotenv())
 
 from summarizer import Summarizer
 
@@ -31,9 +36,58 @@ class Crawler:
         self.session = self._create_session()
         
     def _load_config(self, config_path: str) -> dict:
-        """Load crawler configuration from YAML file."""
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+        """Load crawler configuration from YAML file, overridden by environment variables."""
+        config = {}
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            pass
+
+        # Apply environment variable overrides
+        config = self._apply_env_overrides(config)
+        return config
+
+    def _apply_env_overrides(self, config: dict) -> dict:
+        """Override YAML config with values from environment variables."""
+        # Output path
+        output_path = os.getenv('CRAWLER_OUTPUT_PATH')
+        if output_path:
+            config.setdefault('output', {})['path'] = output_path
+
+        # Backfill settings
+        backfill_enabled = os.getenv('CRAWLER_BACKFILL_ENABLED')
+        if backfill_enabled is not None:
+            config.setdefault('backfill', {})['enabled'] = backfill_enabled.lower() == 'true'
+
+        backfill_start = os.getenv('CRAWLER_BACKFILL_START_DATE')
+        if backfill_start:
+            config.setdefault('backfill', {})['start_date'] = backfill_start
+
+        # Crawler behavior
+        delay = os.getenv('CRAWLER_DELAY_BETWEEN_REQUESTS')
+        if delay:
+            config.setdefault('crawler', {})['delay_between_requests'] = float(delay)
+
+        max_retries = os.getenv('CRAWLER_MAX_RETRIES')
+        if max_retries:
+            config.setdefault('crawler', {})['max_retries'] = int(max_retries)
+
+        timeout = os.getenv('CRAWLER_TIMEOUT')
+        if timeout:
+            config.setdefault('crawler', {})['timeout'] = int(timeout)
+
+        # Sources (JSON array)
+        sources_json = os.getenv('CRAWLER_SOURCES')
+        if sources_json:
+            config['sources'] = json.loads(sources_json)
+
+        # Categories (JSON array)
+        categories_json = os.getenv('CRAWLER_CATEGORIES')
+        if categories_json:
+            config['categories'] = json.loads(categories_json)
+
+        return config
     
     def _create_session(self) -> requests.Session:
         """Create requests session with retry strategy."""
